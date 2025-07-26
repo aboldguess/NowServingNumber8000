@@ -3,14 +3,16 @@ import socket
 import time
 from typing import List, Dict
 import os
-import importlib.util
-
 import psutil
 import requests
 from flask import Flask, render_template_string, request
 import argparse  # used to parse command line options like --port
 
 app = Flask(__name__)
+
+# Base URL used to generate external service links. The port number for each
+# service will be appended to this address when building the table.
+EXTERNAL_IP = "http://193.237.136.211"
 
 # HTML template used to display the service table. Jinja2 syntax is used to
 # substitute values. Each service row includes a link to the running service.
@@ -37,7 +39,7 @@ HTML_TEMPLATE = """
             <th>CPU %</th>
             <th>RAM (MB)</th>
             <th>Forwarded</th>
-            <th>Path</th>
+            <th>External</th>
         </tr>
         {% for svc in services %}
         <tr>
@@ -48,7 +50,7 @@ HTML_TEMPLATE = """
             <td>{{ '{:.1f}'.format(svc.cpu) }}</td>
             <td>{{ '{:.1f}'.format(svc.mem) }}</td>
             <td>{{ 'Yes' if svc.forwarded else 'No' }}</td>
-            <td>{{ svc.path }}</td>
+            <td><a href="{{ external_ip }}:{{ svc.port }}" target="_blank">External</a></td>
         </tr>
         {% endfor %}
     </table>
@@ -102,60 +104,6 @@ def get_app_name(proc: psutil.Process) -> str:
     return name
 
 
-def resolve_module_to_path(module_name: str) -> str:
-    """Return the absolute file path for a Python module if possible."""
-    try:
-        spec = importlib.util.find_spec(module_name)
-        if spec and spec.origin:
-            return os.path.abspath(spec.origin)
-    except Exception:
-        pass
-    return ""
-
-
-def get_process_path(proc: psutil.Process) -> str:
-    """Return a representative path for the running application.
-
-    The function tries to determine a meaningful path for a process. For
-    Python and Node applications the script path is returned when
-    possible. For other processes the path to the executable is used as a
-    fallback. If detection fails an empty string is returned.
-    """
-    try:
-        cmdline = proc.cmdline()
-        if not cmdline:
-            return proc.exe()
-
-        name = proc.name().lower()
-
-        # Handle Python interpreters specially so we show the running
-        # script rather than the interpreter executable.
-        if name.startswith("python") and len(cmdline) > 1:
-            arg = cmdline[1]
-            if arg == "-m" and len(cmdline) > 2:
-                # Attempt to resolve module names to their file path.
-                module_path = resolve_module_to_path(cmdline[2])
-                return module_path or cmdline[2]
-            if os.path.isfile(arg):
-                return os.path.abspath(arg)
-
-        # Node.js typically has the script as the first argument after
-        # the node executable.
-        if name == "node" and len(cmdline) > 1 and os.path.isfile(cmdline[1]):
-            return os.path.abspath(cmdline[1])
-
-        # For other processes scan the command line for a readable file.
-        for arg in cmdline[1:]:
-            if os.path.isfile(arg):
-                return os.path.abspath(arg)
-
-        return proc.exe()
-    except (psutil.Error, FileNotFoundError, IndexError):
-        # As a last resort try the process' current working directory.
-        try:
-            return proc.cwd()
-        except Exception:
-            return ""
 
 
 def list_services() -> List[Dict]:
@@ -190,8 +138,6 @@ def list_services() -> List[Dict]:
             cpu = proc.cpu_percent(interval=0.1)
             mem = proc.memory_info().rss / (1024 * 1024)
             protocol = "tcp" if conn.type == socket.SOCK_STREAM else "udp"
-            # Determine the full path to the running executable or script.
-            path = get_process_path(proc)
             forwarded = False
             if public_ip:
                 forwarded = check_port_forwarding(public_ip, port)
@@ -203,7 +149,6 @@ def list_services() -> List[Dict]:
                 "cpu": cpu,
                 "mem": mem,
                 "forwarded": forwarded,
-                "path": path,
             })
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             # The process may have finished or we don't have permission.
@@ -218,7 +163,12 @@ def list_services() -> List[Dict]:
 def index():
     host = request.host.split(":")[0]
     services = list_services()
-    return render_template_string(HTML_TEMPLATE, services=services, host=host)
+    return render_template_string(
+        HTML_TEMPLATE,
+        services=services,
+        host=host,
+        external_ip=EXTERNAL_IP,
+    )
 
 
 if __name__ == "__main__":
