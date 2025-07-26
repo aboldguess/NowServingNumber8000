@@ -6,6 +6,7 @@ from typing import List, Dict
 import psutil
 import requests
 from flask import Flask, render_template_string, request
+import argparse  # used to parse command line options like --port
 
 app = Flask(__name__)
 
@@ -134,5 +135,17 @@ def index():
 
 
 if __name__ == "__main__":
-    # Run the web server on port 8000 accessible on all network interfaces.
-    app.run(host="0.0.0.0", port=8000)
+    parser = argparse.ArgumentParser(
+        description="Run the service listing web server"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to run the server on (default: 8000)",
+    )
+    args = parser.parse_args()
+
+    # Run the web server accessible on all network interfaces using the
+    # specified port. Defaults to 8000 when no --port argument is provided.
+    app.run(host="0.0.0.0", port=args.port)
