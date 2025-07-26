@@ -2,6 +2,7 @@ import datetime
 import socket
 import time
 from typing import List, Dict
+import os
 
 import psutil
 import requests
@@ -77,6 +78,27 @@ def get_public_ip() -> str:
         return ""
 
 
+def get_app_name(proc: psutil.Process) -> str:
+    """Return a friendlier name for a process.
+
+    For Python processes this attempts to show the script or module being
+    executed instead of the python interpreter name.
+    """
+    name = proc.name()
+    try:
+        cmdline = proc.cmdline()
+        # cmdline[0] is typically the executable path. When the process is
+        # a python interpreter the actual script follows as the next arg.
+        if cmdline and name.lower().startswith("python"):
+            if len(cmdline) > 1:
+                if cmdline[1] == "-m" and len(cmdline) > 2:
+                    return cmdline[2]
+                return os.path.basename(cmdline[1])
+    except (psutil.Error, IndexError):
+        pass
+    return name
+
+
 def list_services() -> List[Dict]:
     """Gather information about running services that are listening on a port."""
     services = []
@@ -100,7 +122,10 @@ def list_services() -> List[Dict]:
             continue
         try:
             proc = psutil.Process(pid)
-            name = proc.name()
+            # Determine a human friendly name for the process. For Python
+            # interpreters this will try to display the script that was run
+            # instead of just the Python executable name.
+            name = get_app_name(proc)
             create_time = proc.create_time()
             uptime = format_uptime(time.time() - create_time)
             cpu = proc.cpu_percent(interval=0.1)
