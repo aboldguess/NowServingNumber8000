@@ -36,6 +36,7 @@ HTML_TEMPLATE = """
             <th>CPU %</th>
             <th>RAM (MB)</th>
             <th>Forwarded</th>
+            <th>Path</th>
         </tr>
         {% for svc in services %}
         <tr>
@@ -46,6 +47,7 @@ HTML_TEMPLATE = """
             <td>{{ '{:.1f}'.format(svc.cpu) }}</td>
             <td>{{ '{:.1f}'.format(svc.mem) }}</td>
             <td>{{ 'Yes' if svc.forwarded else 'No' }}</td>
+            <td>{{ svc.path }}</td>
         </tr>
         {% endfor %}
     </table>
@@ -99,6 +101,28 @@ def get_app_name(proc: psutil.Process) -> str:
     return name
 
 
+def get_process_path(proc: psutil.Process) -> str:
+    """Return the full path for a process executable or script.
+
+    For Python interpreters this attempts to return the script path
+    rather than the interpreter path itself.
+    """
+    try:
+        cmdline = proc.cmdline()
+        if cmdline and proc.name().lower().startswith("python"):
+            if len(cmdline) > 1:
+                # When using `-m` the next argument is a module name and not a
+                # file path, so return it as-is.
+                if cmdline[1] == "-m" and len(cmdline) > 2:
+                    return cmdline[2]
+                # Return an absolute path to the Python script.
+                return os.path.abspath(cmdline[1])
+        # Fallback to the executable path for non-Python processes.
+        return proc.exe()
+    except (psutil.Error, IndexError):
+        return ""
+
+
 def list_services() -> List[Dict]:
     """Gather information about running services that are listening on a port."""
     services = []
@@ -131,6 +155,8 @@ def list_services() -> List[Dict]:
             cpu = proc.cpu_percent(interval=0.1)
             mem = proc.memory_info().rss / (1024 * 1024)
             protocol = "tcp" if conn.type == socket.SOCK_STREAM else "udp"
+            # Determine the full path to the running executable or script.
+            path = get_process_path(proc)
             forwarded = False
             if public_ip:
                 forwarded = check_port_forwarding(public_ip, port)
@@ -142,6 +168,7 @@ def list_services() -> List[Dict]:
                 "cpu": cpu,
                 "mem": mem,
                 "forwarded": forwarded,
+                "path": path,
             })
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             # The process may have finished or we don't have permission.
