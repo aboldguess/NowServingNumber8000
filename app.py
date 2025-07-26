@@ -3,6 +3,7 @@ import socket
 import time
 from typing import List, Dict
 import os
+import importlib.util
 
 import psutil
 import requests
@@ -101,26 +102,60 @@ def get_app_name(proc: psutil.Process) -> str:
     return name
 
 
-def get_process_path(proc: psutil.Process) -> str:
-    """Return the full path for a process executable or script.
+def resolve_module_to_path(module_name: str) -> str:
+    """Return the absolute file path for a Python module if possible."""
+    try:
+        spec = importlib.util.find_spec(module_name)
+        if spec and spec.origin:
+            return os.path.abspath(spec.origin)
+    except Exception:
+        pass
+    return ""
 
-    For Python interpreters this attempts to return the script path
-    rather than the interpreter path itself.
+
+def get_process_path(proc: psutil.Process) -> str:
+    """Return a representative path for the running application.
+
+    The function tries to determine a meaningful path for a process. For
+    Python and Node applications the script path is returned when
+    possible. For other processes the path to the executable is used as a
+    fallback. If detection fails an empty string is returned.
     """
     try:
         cmdline = proc.cmdline()
-        if cmdline and proc.name().lower().startswith("python"):
-            if len(cmdline) > 1:
-                # When using `-m` the next argument is a module name and not a
-                # file path, so return it as-is.
-                if cmdline[1] == "-m" and len(cmdline) > 2:
-                    return cmdline[2]
-                # Return an absolute path to the Python script.
-                return os.path.abspath(cmdline[1])
-        # Fallback to the executable path for non-Python processes.
+        if not cmdline:
+            return proc.exe()
+
+        name = proc.name().lower()
+
+        # Handle Python interpreters specially so we show the running
+        # script rather than the interpreter executable.
+        if name.startswith("python") and len(cmdline) > 1:
+            arg = cmdline[1]
+            if arg == "-m" and len(cmdline) > 2:
+                # Attempt to resolve module names to their file path.
+                module_path = resolve_module_to_path(cmdline[2])
+                return module_path or cmdline[2]
+            if os.path.isfile(arg):
+                return os.path.abspath(arg)
+
+        # Node.js typically has the script as the first argument after
+        # the node executable.
+        if name == "node" and len(cmdline) > 1 and os.path.isfile(cmdline[1]):
+            return os.path.abspath(cmdline[1])
+
+        # For other processes scan the command line for a readable file.
+        for arg in cmdline[1:]:
+            if os.path.isfile(arg):
+                return os.path.abspath(arg)
+
         return proc.exe()
-    except (psutil.Error, IndexError):
-        return ""
+    except (psutil.Error, FileNotFoundError, IndexError):
+        # As a last resort try the process' current working directory.
+        try:
+            return proc.cwd()
+        except Exception:
+            return ""
 
 
 def list_services() -> List[Dict]:
