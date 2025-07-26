@@ -5,7 +5,8 @@ from typing import List, Dict
 import os
 import psutil
 import requests
-from flask import Flask, render_template_string, request
+from flask import Flask, render_template_string, request, redirect, url_for
+import subprocess
 import argparse  # used to parse command line options like --port
 
 app = Flask(__name__)
@@ -40,6 +41,8 @@ HTML_TEMPLATE = """
             <th>RAM (MB)</th>
             <th>Forwarded</th>
             <th>External</th>
+            <th>Stop</th>
+            <th>Restart</th>
         </tr>
         {% for svc in services %}
         <tr>
@@ -51,8 +54,27 @@ HTML_TEMPLATE = """
             <td>{{ '{:.1f}'.format(svc.mem) }}</td>
             <td>{{ 'Yes' if svc.forwarded else 'No' }}</td>
             <td><a href="{{ external_ip }}:{{ svc.port }}" target="_blank">External</a></td>
+            <td>
+                <form method="post" action="/stop/{{ svc.pid }}">
+                    <button type="submit">Stop</button>
+                </form>
+            </td>
+            <td>
+                <form method="post" action="/restart/{{ svc.pid }}">
+                    <input type="text" name="cmd" placeholder="restart command">
+                    <button type="submit">Restart</button>
+                </form>
+            </td>
         </tr>
         {% endfor %}
+        <tr>
+            <td colspan="10">
+                <form method="post" action="/add">
+                    <input type="text" name="path" placeholder="path to new service">
+                    <button type="submit">Add Service</button>
+                </form>
+            </td>
+        </tr>
     </table>
 </body>
 </html>
@@ -142,6 +164,7 @@ def list_services() -> List[Dict]:
             if public_ip:
                 forwarded = check_port_forwarding(public_ip, port)
             services.append({
+                "pid": pid,
                 "name": name,
                 "port": port,
                 "protocol": protocol,
@@ -157,6 +180,45 @@ def list_services() -> List[Dict]:
     # Sort services by port for consistent ordering.
     services.sort(key=lambda s: s["port"])
     return services
+
+
+@app.route("/stop/<int:pid>", methods=["POST"])
+def stop_service(pid: int):
+    """Terminate the process with the given PID."""
+    try:
+        # Use psutil to locate and terminate the target process
+        proc = psutil.Process(pid)
+        proc.terminate()
+    except psutil.NoSuchProcess:
+        pass
+    return redirect(url_for("index"))
+
+
+@app.route("/restart/<int:pid>", methods=["POST"])
+def restart_service(pid: int):
+    """Terminate a process and start it again using a user provided command."""
+    cmd = request.form.get("cmd")
+    try:
+        # Stop the running process first
+        proc = psutil.Process(pid)
+        proc.terminate()
+        proc.wait(timeout=5)
+    except psutil.NoSuchProcess:
+        pass
+    if cmd:
+        # Launch the new command in the background if provided
+        subprocess.Popen(cmd, shell=True)
+    return redirect(url_for("index"))
+
+
+@app.route("/add", methods=["POST"])
+def add_service():
+    """Start a new service from a given path or command."""
+    path = request.form.get("path")
+    if path:
+        # Launch the service using the provided path/command
+        subprocess.Popen(path, shell=True)
+    return redirect(url_for("index"))
 
 
 @app.route("/")
