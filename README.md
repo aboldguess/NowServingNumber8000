@@ -13,10 +13,12 @@ This repository contains a lightweight Python web application that lists running
    ```bash
    pip install -r requirements.txt
    ```
-3. Start the server (optionally specify a custom port using `--port`):
+3. Start the server using the new script (optionally specify a custom port and `--production`):
    ```bash
-   python app.py --port 8001
+   python rpi_nsn8000.py --port 8001 --production
    ```
-4. Visit `http://<your-ip>:<port>` in your browser (replace `<port>` with the number chosen, default is 8000).
+4. Visit `http://<your-ip>:<port>` in your browser (replace `<port>` with the number chosen; default is 8000).
+
+Passing `--production` runs the app with the Waitress WSGI server which is suitable for long running deployments.
 
 The application attempts to determine if ports are forwarded to be accessible externally by making a connection to the device's public IP. This may not always be reliable depending on your network setup.
