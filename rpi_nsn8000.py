@@ -7,7 +7,8 @@ import psutil
 import requests
 from flask import Flask, render_template_string, request, redirect, url_for
 import subprocess
-import argparse  # used to parse command line options like --port
+import argparse  # used to parse command line options like --port or --production
+from waitress import serve  # production-ready WSGI server
 
 app = Flask(__name__)
 
@@ -243,8 +244,19 @@ if __name__ == "__main__":
         default=8000,
         help="Port to run the server on (default: 8000)",
     )
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help="Run using the Waitress production server",
+    )
     args = parser.parse_args()
 
-    # Run the web server accessible on all network interfaces using the
-    # specified port. Defaults to 8000 when no --port argument is provided.
-    app.run(host="0.0.0.0", port=args.port)
+    # When --production is specified, use Waitress for a robust deployment.
+    # Otherwise fall back to Flask's built-in development server.
+    if args.production:
+        # Waitress serves the Flask app with better performance than the
+        # built-in development server and is safe for production use.
+        serve(app, host="0.0.0.0", port=args.port)
+    else:
+        # Flask development server is convenient for testing and debugging.
+        app.run(host="0.0.0.0", port=args.port)
